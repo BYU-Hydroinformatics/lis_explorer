@@ -1,0 +1,344 @@
+{% extends "lis_explorer/base.html" %}
+{% load tethys_gizmos %}
+{% load staticfiles %}
+
+{% block styles %}
+{{ block.super }}
+<link rel="stylesheet" href="https://openlayers.org/en/v4.1.1/css/ol.css" type="text/css">
+<link rel="stylesheet" href="http://code.jquery.com/ui/1.11.4/themes/smoothness/jquery-ui.css">
+{% endblock %}
+
+
+{% block global_scripts %}
+{{block.super}}
+<script src="http://code.highcharts.com/highcharts.js"></script>
+<script src="http://code.highcharts.com/modules/exporting.js"></script>
+<script src="http://highcharts.github.io/export-csv/export-csv.js"></script>
+<script src="http://code.jquery.com/ui/1.11.4/jquery-ui.js"></script>
+<script src="https://openlayers.org/en/v4.1.1/build/ol.js"></script>
+{% endblock %}
+
+{% block header_buttons %}
+<div class="header-button glyphicon-button" data-toggle="tooltip" data-placement="bottom" title="Help">
+  <a data-toggle="modal" data-target="#help-modal"><span class="glyphicon glyphicon-question-sign"></span></a>
+</div>
+<div class="header-button glyphicon-button" data-toggle="tooltip" data-placement="bottom" title="API">
+  <a data-toggle="modal" data-target="#api-modal"><span class="glyphicon glyphicon-info-sign"></span></a>
+</div>
+{% endblock %}
+
+{% block app_navigation_items %}
+<br/>
+<b>Map Interaction</b>
+<select id="types" class="btn btn-xs btn-success" data-width="fit">
+    <option value="None">None</option>
+    <option value="Point">Point</option>
+    <option value="Polygon">Polygon</option>
+    <option value="Upload">Upload Shapefile</option>
+</select>
+<br>
+<br>
+
+<form id="get-ts" name="get-ts" action="get_ts/" method="POST">
+    {% csrf_token %}
+    {% gizmo variable_select %}
+    <input type="text" name="point-lat-lon" id="point-lat-lon" hidden>
+    <input type="text" name="poly-lat-lon" id="poly-lat-lon" hidden>
+    <input type="text" name="shp-lat-lon" id="shp-lat-lon" hidden>
+    <button type="button" id="btn-get-plot" name="btn-get-plot" class="btn btn-default">Show Timeseries</button>
+</form>
+<br>
+<br>
+<div class="warning"></div>
+
+{% endblock %}
+
+{% block app_content %}
+<style>
+    #map{
+        width:100%;
+        height: 400px;
+    }
+</style>
+<div hidden>{% gizmo date_select %}</div>
+<div id="control-bar" class="control-bar row">
+    <div class="col-md-2 cur-var">
+        <select id="vars" class="btn btn-xs btn-success" data-width="fit">
+            {% for key,val in display_vars.items %}
+            <option value="{{key}}">{{val}}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="animation col-md-2">
+        <!--<div class="btn-toolbar" role="toolbar" align="center"></div>-->
+        <div class="btn btn-success btn-group btn-xs btn-run" role="group"><span class="glyphicon glyphicon-play"></span></div>
+        <div class="btn btn-danger btn-group btn-xs btn-stop" role="group"><span class="glyphicon glyphicon-pause"></span></div>
+        <div class="btn btn-danger btn-group btn-xs btn-decrease" role="group"><span class="glyphicon glyphicon-fast-backward"></span></div>
+        <div class="btn btn-success btn-group btn-xs btn-increase" role="group"><span class="glyphicon glyphicon-fast-forward"></span></div>
+    </div>
+    <div id="slider" class="col-md-8"></div>
+</div>
+<div class="row">
+    <div class="col-md-5">     <label id="speed-label" for="speed">Animation Speed(fps):</label>
+        <input type="text" id="speed" readonly style="border:0; color:#f6931f; font-weight:normal;" value="1"></div>
+    <div class="col-md-3"><label id="label" for="lis-date">Day:</label>
+        <input type="text" id="lis-date" readonly style="border:0; color:#f6931f; font-weight:normal;" value="{{first_day}}"></div>
+</div>
+<div id="layers" name="layers" data-slider-max="{{slider_max}}" data-var-info='{{var_metadata}}' data-color-bar="{{cbar}}" style="display:none;"></div>
+<div id="map" class="map"></div>
+<div class="popup" id="popup"></div>
+<br>
+<canvas id="cv" width="1100px" height="50px"></canvas>
+<br>
+<div>
+    <div class="chart-wrapper">
+        <div class="chart-inner">
+            <div id="plotter" name="plotter" style="height:275px;width:100%" ></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{# Use the after_app_content block for modals #}
+{% block after_app_content %}
+<!-- Help Modal -->
+<div class="modal fade" id="help-modal" tabindex="-1" role="dialog" aria-labelledby="help-modal-label">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+        <h4 class="modal-title" id="help-modal-label">Help</h4>
+      </div>
+      <div class="modal-body">
+        <p><b>Data provided by The Hydroclimate Research Group at John Hopkins University</b></p>
+        <p><b>For any questions, comments or requests contact Dr. Jim Nelson at <a href="mailto:jimn@byu.edu">jimn@byu.edu</a></b></p>
+        <h5>The following steps highlight the several functions of the LIS Observations web app</h5>
+        <ol>
+          <li class="welcome-step">View different timesteps
+            <ul>
+              <li class="welcome-substep1">Move the slider above the map
+            </ul>
+          </li>
+
+          <li class="welcome-step">View grid value
+            <p><b>Please make sure that map interaction is set to none</b></p>
+            <ul>
+              <li class="welcome-substep1">Simply click within the raster region. It should show a popup with the value.
+            </ul>
+            <p>Note: If you don't see a value it means that you are cliking outside the actual data bounds.</p>
+          </li>
+          <li class="welcome-step">View Animation
+            <ul>
+              <li class="welcome-substep1">Use the animation controls to the left of the slider to start or stop animation
+              <li class="welcome-substep1">Use the Forward and Reverse buttons to increase and decrease animation speed
+            </ul>
+          </li>
+          <li class="welcome-step">View different variables
+            <ul>
+              <li class="welcome-substep1">Select the map display variable from the dropdown to the left of the animation controls
+            </ul>
+          </li>
+          <li class="welcome-step">View Time Series
+            <p><b>Select the point,polygon or shapefile option from the map interaction dropdown:</b></p>
+            <ul>
+              <li class="welcome-substep1">Click within the region
+              <li class="welcome-substep1">Select a variable of interest and then click on Show Plot
+              <li class="welcome-substep1">The Time Series for that point,polygon or shapefile will be shown below the map
+            </ul>
+            <p>Note: Be sure that the shapefile is within the region</p>
+          </li>
+          <li class="welcome-step">Click 'Exit' in the top-right of the app to return to the Main Apps Library</li>
+        </ol>
+      </div>
+      <div class="modal-footer">
+        <span><i>Developed at the BYU Hydroinformatics Lab</i></span>&nbsp;
+        <a href="https://github.com/BYU-Hydroinformatics/lis" target="_blank" class="btn btn-default">View Code</a>
+        <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- API Modal -->
+<div class="modal fade" id="api-modal" tabindex="-1" role="dialog" aria-labelledby="api-modal-label">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+        <h2 class="modal-title" id="api-modal-label">Developers API</h2>
+      </div>
+      <div class="modal-body">
+        <p>
+          A Developers API is provided for those who wish to incorporate the LIS Observations Explorer data into their own
+          separate application or script.
+        </p>
+        <h4>API Methods</h4>
+        <p>All API methods must be called using the following pattern:</p>
+        <p><b>{{ host }}/apps/[parent-app]/api/[MethodName]/?param1=value1&#38;param2=value2&#38;...paramN=valueN</b></p>
+        <p>See documentation and specific examples for all available methods below.</p>
+        <h6>GetVariableList</h6>
+        <table>
+          <tr>
+            <td><b>Parent App</b></td>
+            <td colspan="5">lis-viewer</td>
+          </tr>
+          <tr>
+            <td><b>Supported Methods</b></td>
+            <td colspan="5">GET</td>
+          </tr>
+          <tr>
+            <td><b>Returns</b></td>
+            <td colspan="5">A list of all available variables through the LIS Explorer.</td>
+          </tr>
+        </table>
+        <h6>Example:</h6>
+        <a href="{{ host }}/apps/lis-viewer/api/GetVariableList/" target="_blank">
+          <code>{{ host }}/apps/lis-viewer/api/GetVariableList/</code>
+        </a>
+        <br><br>
+        <h6>GetPointValues</h6>
+        <table>
+          <tr>
+            <td><b>Parent App</b></td>
+            <td colspan="5">lis-viewer</td>
+          </tr>
+          <tr>
+            <th>Supported Methods</th>
+            <td colspan="5">GET</td>
+          </tr>
+          <tr>
+            <th>Returns</th>
+            <td colspan="5">A JSON object with a timeseries for a given point and variable.</td>
+          </tr>
+          <tr>
+            <td rowspan="5"><b>Params</b></td>
+            <td><b>Name</b></td>
+            <td><b>Description</b></td>
+            <td><b>Valid Values</b></td>
+            <td><b>Required</b></td>
+          </tr>
+          <tr>
+            <td>latitude</td>
+            <td>Latitude in WGS 84 projection.</td>
+            <td>Any value within the LIS Explorer Domain.</td>
+            <td>Yes</td>
+          </tr>
+          <tr>
+            <td>longitude</td>
+            <td>Longitude in the WGS 84 projection.</td>
+            <td>Any value within the LIS Explorer Domain.</td>
+            <td>Yes</td>
+          </tr>
+          <tr>
+            <td>variable</td>
+            <td>LIS Variable for the forecast.</td>
+            <td>Has to be part of the GetVariableList dictionary</td>
+            <td>Yes</td>
+          </tr>
+        </table>
+        <h6>Example:</h6>
+        <a href="{{ host }}/apps/lis-viewer/api/GetPointValues/?latitude=20.7&longitude=80.2&variable=Qs" target="_blank">
+          <code>{{ host }}/apps/lis-viewer/api/GetPointValues/?latitude=20.7&longitude=80.2&variable=Qs</code>
+        </a>
+        <br><br>
+        <h6>GetPolygonValues</h6>
+        <table>
+          <tr>
+            <td><b>Parent App</b></td>
+            <td colspan="5">lis-viewer</td>
+          </tr>
+          <tr>
+            <th>Supported Methods</th>
+            <td colspan="5">GET</td>
+          </tr>
+          <tr>
+            <th>Returns</th>
+            <td colspan="5">A JSON object with a timeseries for a given polygon and variable.</td>
+          </tr>
+          <tr>
+            <td rowspan="6"><b>Params</b></td>
+            <td><b>Name</b></td>
+            <td><b>Description</b></td>
+            <td><b>Valid Values</b></td>
+            <td><b>Required</b></td>
+          </tr>
+          <tr>
+            <td>minx</td>
+            <td>Minimum X value for a polygon bounding box in WGS 84 projection.</td>
+            <td>Any value within the LIS Explorer Domain.</td>
+            <td>Yes</td>
+          </tr>
+          <tr>
+            <td>miny</td>
+            <td>Minimum Y value for a polygon bounding box in WGS 84 projection.</td>
+            <td>Any value within the LIS Explorer Domain.</td>
+            <td>Yes</td>
+          </tr>
+          <tr>
+            <td>maxx</td>
+            <td>Maximum Y value for a polygon bounding box in WGS 84 projection.</td>
+            <td>Any value within the LIS Explorer Domain.</td>
+            <td>Yes</td>
+          </tr>
+          <tr>
+            <td>maxy</td>
+            <td>Maximum Y value for a polygon bounding box in WGS 84 projection.</td>
+            <td>Any value within the LIS Explorer Domain.</td>
+            <td>Yes</td>
+          </tr>
+          <tr>
+            <td>variable</td>
+            <td>LIS Variable for the forecast.</td>
+            <td>Has to be part of the GetVariableList dictionary</td>
+            <td>Yes</td>
+          </tr>
+        </table>
+        <h6>Example:</h6>
+        <a href="{{ host }}/apps/lis-viewer/api/GetPolygonValues/?miny=20&maxy=24&minx=80&maxx=84&variable=evap" target="_blank">
+          <code>{{ host }}/apps/lis-viewer/api/GetPolygonValues/?miny=20&maxy=24&minx=80&maxx=84&variable=evap</code>
+        </a>
+      </div>
+      <div class="modal-footer">
+        <span><i>Developed at the BYU Hydroinformatics Lab</i></span>&nbsp;
+        <a href="https://github.com/BYU-Hydroinformatics/lis" target="_blank" class="btn btn-default">View Code</a>
+        <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+<form id="modalUpload" class="modal fade" role="dialog">
+    <div class="modal-dialog">
+        <!-- Modal content-->
+        <div class="modal-content">
+            <div class="modal-header">
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+                <h4 class="modal-title">Upload Shapefile</h4>
+            </div>
+            <div class="modal-body">
+                <div class="form-group shp_upload">
+                    <label class="control-label" for="shp-upload-input">Multiple Files are allowed</label>
+                    <input id="shp-upload-input" name="shp-upload-input" type="file" multiple>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <div class="button-group">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
+                    <button type="button" id="btn-add-shp" class="btn btn-default">Add</button>
+                </div>
+            </div>
+        </div>
+        <!--End modal content-->
+    </div>
+</form>
+{% endblock %}
+
+{% block app_actions %}
+
+{% endblock %}
+
+
+{% block scripts %}
+{{ block.super }}
+<script src="{% static 'lis_explorer/js/lis_explorer.js' %}" type="text/javascript"></script>
+{% endblock %}
